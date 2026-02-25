@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: fatigue-xr
+Version: 0.1.0
+Summary: Eye-tracking fatigue and cognitive-load demo
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: scikit-learn
+Requires-Dist: openpyxl
+Requires-Dist: pyarrow
+Requires-Dist: joblib
+Requires-Dist: pydantic
+Requires-Dist: typer
+Requires-Dist: rich
+Requires-Dist: matplotlib
+
 # Fatigue XR Demo
 
 Scaffold for an eye-tracking fatigue/cognitive-load demo with a raw data root at `Data/` and a src-layout Python package.

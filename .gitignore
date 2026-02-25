@@ -1,0 +1,8 @@
+Data/**
+data/processed/**
+data/features/**
+models/**
+__pycache__/
+.venv/
+.pytest_cache/
+.mypy_cache/

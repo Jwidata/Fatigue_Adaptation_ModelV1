@@ -1,0 +1,11 @@
+pandas
+numpy
+scipy
+scikit-learn
+openpyxl
+pyarrow
+joblib
+pydantic
+typer
+rich
+matplotlib
