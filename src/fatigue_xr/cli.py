@@ -13,6 +13,7 @@ from fatigue_xr.config import (
     REPORTS_DIR,
     TIMETICK_HZ,
 )
+from fatigue_xr.replay import run_replay
 from fatigue_xr.et_loader import load_et_xlsx
 from fatigue_xr.evaluate import evaluate_saved_model
 from fatigue_xr.featurize import featurize_all
@@ -344,6 +345,127 @@ def stats(
     report_path = REPORTS_DIR / "feature_stats.md"
     write_markdown(report_path, build_feature_stats_report(stats_summary))
     typer.echo(f"Wrote report to {report_path}")
+
+
+@app.command("list-et")
+def list_et(
+    manifest_path: Path = typer.Option(
+        PROCESSED_DIR / "et_manifest.parquet",
+        "--manifest-path",
+        help="Path to ET manifest parquet",
+    ),
+    participant_id: str | None = typer.Option(
+        None,
+        "--participant-id",
+        help="Filter by participant id",
+    ),
+    condition: str | None = typer.Option(
+        None,
+        "--condition",
+        help="Filter by condition (single|dual)",
+    ),
+) -> None:
+    """List available ET sessions from the manifest."""
+    setup_logging()
+    logger = get_logger(__name__)
+
+    manifest_path = manifest_path.expanduser()
+    if not manifest_path.exists():
+        raise typer.BadParameter("ET manifest not found; run standardize-et first.")
+
+    df = pd.read_parquet(manifest_path)
+    if participant_id:
+        df = df[df["participant_id"] == participant_id]
+    if condition:
+        df = df[df["condition"] == condition]
+
+    if df.empty:
+        typer.echo("No matching ET sessions found.")
+        return
+
+    logger.info("Listing ET sessions", extra={"count": int(len(df))})
+    typer.echo("participant_id | condition | session_id | approx_hz | duration_sec")
+    for _, row in df.iterrows():
+        duration = float(row["end_time_sec"] - row["start_time_sec"]) if pd.notna(row["end_time_sec"]) and pd.notna(row["start_time_sec"]) else float("nan")
+        typer.echo(
+            f"{row['participant_id']} | {row['condition']} | {row['session_id']} | {row.get('approx_hz', float('nan'))} | {duration:.2f}"
+        )
+
+
+@app.command("replay")
+def replay(
+    participant_id: str = typer.Option(
+        ...,
+        "--participant-id",
+        help="Participant id (e.g., ID01)",
+    ),
+    condition: str = typer.Option(
+        ...,
+        "--condition",
+        help="Condition (single|dual)",
+    ),
+    session_id: str = typer.Option(
+        ...,
+        "--session-id",
+        help="Session id from manifest",
+    ),
+    model_path: Path = typer.Option(
+        Path("models") / "best_model.joblib",
+        "--model-path",
+        help="Path to trained model bundle",
+    ),
+    manifest_path: Path = typer.Option(
+        PROCESSED_DIR / "et_manifest.parquet",
+        "--manifest-path",
+        help="Path to ET manifest parquet",
+    ),
+    window_len_sec: float = typer.Option(10.0, "--window-len-sec"),
+    stride_sec: float = typer.Option(1.0, "--stride-sec"),
+    speed: float = typer.Option(5.0, "--speed"),
+    max_steps: int | None = typer.Option(None, "--max-steps"),
+) -> None:
+    """Replay standardized ET data and stream model output."""
+    setup_logging()
+    logger = get_logger(__name__)
+
+    model_path = model_path.expanduser()
+    manifest_path = manifest_path.expanduser()
+
+    if not model_path.exists():
+        raise typer.BadParameter("Model bundle not found; run train first.")
+    if not manifest_path.exists():
+        raise typer.BadParameter("ET manifest not found; run standardize-et first.")
+
+    logger.info(
+        "Starting replay",
+        extra={
+            "participant_id": participant_id,
+            "condition": condition,
+            "session_id": session_id,
+        },
+    )
+    out_csv = run_replay(
+        participant_id=participant_id,
+        condition=condition,
+        session_id=session_id,
+        model_path=model_path,
+        manifest_path=manifest_path,
+        window_len_sec=window_len_sec,
+        stride_sec=stride_sec,
+        speed=speed,
+        max_steps=max_steps,
+    )
+
+    if out_csv.exists():
+        df = pd.read_csv(out_csv)
+        if not df.empty:
+            last = df.iloc[-1]
+            typer.echo(
+                f"Last score/state/action: {last['score']:.3f} | {last['state']} | {last['action']}"
+            )
+
+    logger.info("Replay finished", extra={"out_csv": str(out_csv)})
+    typer.echo(f"Wrote replay CSV to {out_csv}")
 
 
 def load_existing_index(parquet_path: Path) -> pd.DataFrame:
