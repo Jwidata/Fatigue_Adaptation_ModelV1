@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fatigue XR Replay Demo</title>
+    <style>
+      body { font-family: "Segoe UI", Tahoma, sans-serif; margin: 20px; }
+      .row { margin-bottom: 10px; }
+      label { display: inline-block; width: 140px; }
+      input { padding: 6px; width: 220px; }
+      button { padding: 8px 16px; }
+      #status { font-size: 32px; margin: 16px 0; }
+      #actionChanged { color: #b00020; font-weight: bold; height: 20px; }
+      #log { border: 1px solid #ccc; padding: 10px; height: 260px; overflow-y: auto; background: #fafafa; }
+    </style>
+  </head>
+  <body>
+    <h1>Fatigue XR Replay Demo</h1>
+
+    <div class="row">
+      <label>Participant</label>
+      <input id="participantId" value="ID01" />
+    </div>
+    <div class="row">
+      <label>Condition</label>
+      <input id="condition" value="dual" />
+    </div>
+    <div class="row">
+      <label>Session ID</label>
+      <input id="sessionId" value="ID01_ET_0" />
+    </div>
+    <div class="row">
+      <label>Speed</label>
+      <input id="speed" value="10" />
+    </div>
+    <div class="row">
+      <label>Max Steps</label>
+      <input id="maxSteps" value="" placeholder="(optional)" />
+    </div>
+    <div class="row">
+      <button id="connectBtn">Connect</button>
+      <button id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+
+    <div id="status">Score: -- | State: -- | Action: --</div>
+    <div id="actionChanged"></div>
+    <div id="log"></div>
+
+    <script>
+      let ws = null;
+      const logEl = document.getElementById("log");
+      const statusEl = document.getElementById("status");
+      const actionChangedEl = document.getElementById("actionChanged");
+      const connectBtn = document.getElementById("connectBtn");
+      const disconnectBtn = document.getElementById("disconnectBtn");
+
+      function appendLog(line) {
+        const item = document.createElement("div");
+        item.textContent = line;
+        logEl.appendChild(item);
+        while (logEl.children.length > 200) {
+          logEl.removeChild(logEl.firstChild);
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function connect() {
+        const participantId = document.getElementById("participantId").value.trim();
+        const condition = document.getElementById("condition").value.trim();
+        const sessionId = document.getElementById("sessionId").value.trim();
+        const speed = document.getElementById("speed").value.trim();
+        const maxSteps = document.getElementById("maxSteps").value.trim();
+
+        const params = new URLSearchParams({
+          participant_id: participantId,
+          condition: condition,
+          session_id: sessionId,
+          speed: speed || "10",
+        });
+        if (maxSteps) {
+          params.set("max_steps", maxSteps);
+        }
+
+        ws = new WebSocket(`ws://localhost:8000/ws/replay?${params.toString()}`);
+
+        ws.onopen = () => {
+          appendLog("Connected.");
+          connectBtn.disabled = true;
+          disconnectBtn.disabled = false;
+        };
+
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data);
+          if (msg.error) {
+            appendLog(`Error: ${msg.error}`);
+            return;
+          }
+          const score = Number(msg.score).toFixed(3);
+          statusEl.textContent = `Score: ${score} | State: ${msg.state} | Action: ${msg.action}`;
+          if (msg.action_changed) {
+            actionChangedEl.textContent = "Action changed!";
+            setTimeout(() => { actionChangedEl.textContent = ""; }, 1000);
+          }
+          appendLog(`[${msg.window_end_sec.toFixed(1)}] ${msg.state} ${msg.action} score=${score}`);
+        };
+
+        ws.onclose = () => {
+          appendLog("Disconnected.");
+          connectBtn.disabled = false;
+          disconnectBtn.disabled = true;
+        };
+      }
+
+      function disconnect() {
+        if (ws) {
+          ws.close();
+          ws = null;
+        }
+      }
+
+      connectBtn.addEventListener("click", connect);
+      disconnectBtn.addEventListener("click", disconnect);
+    </script>
+  </body>
+</html>

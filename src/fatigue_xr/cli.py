@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pandas as pd
 import typer
+import uvicorn
 
 from fatigue_xr.config import (
     FEATURES_DIR,
@@ -13,7 +14,6 @@ from fatigue_xr.config import (
     REPORTS_DIR,
     TIMETICK_HZ,
 )
-from fatigue_xr.replay import run_replay
 from fatigue_xr.et_loader import load_et_xlsx
 from fatigue_xr.evaluate import evaluate_saved_model
 from fatigue_xr.featurize import featurize_all
@@ -27,6 +27,7 @@ from fatigue_xr.raw_scan import (
 from fatigue_xr.reporting import render_markdown_table, write_markdown
 from fatigue_xr.standardize_et import sampling_stats, standardize_et
 from fatigue_xr.train import train_and_select_best
+from fatigue_xr.replay import run_replay
 
 app = typer.Typer(add_completion=False)
 
@@ -373,22 +374,32 @@ def list_et(
     if not manifest_path.exists():
         raise typer.BadParameter("ET manifest not found; run standardize-et first.")
 
-    df = pd.read_parquet(manifest_path)
+    df = cast(pd.DataFrame, pd.read_parquet(manifest_path))
     if participant_id:
-        df = df[df["participant_id"] == participant_id]
+        df = cast(pd.DataFrame, df[df["participant_id"] == participant_id])
     if condition:
-        df = df[df["condition"] == condition]
+        df = cast(pd.DataFrame, df[df["condition"] == condition])
 
-    if df.empty:
+    if bool(df.empty):
         typer.echo("No matching ET sessions found.")
         return
 
     logger.info("Listing ET sessions", extra={"count": int(len(df))})
-    typer.echo("participant_id | condition | session_id | approx_hz | duration_sec")
+    typer.echo(
+        "participant_id | condition | session_id | session_short | approx_hz | duration_sec"
+    )
     for _, row in df.iterrows():
-        duration = float(row["end_time_sec"] - row["start_time_sec"]) if pd.notna(row["end_time_sec"]) and pd.notna(row["start_time_sec"]) else float("nan")
+        start = row["start_time_sec"]
+        end = row["end_time_sec"]
+        start_ok = bool(pd.notna(start))
+        end_ok = bool(pd.notna(end))
+        duration = float(end - start) if start_ok and end_ok else float("nan")
+        session_full = str(row["session_id"])
+        session_short = (
+            session_full.split("__", 1)[1] if "__" in session_full else session_full
+        )
         typer.echo(
-            f"{row['participant_id']} | {row['condition']} | {row['session_id']} | {row.get('approx_hz', float('nan'))} | {duration:.2f}"
+            f"{row['participant_id']} | {row['condition']} | {session_full} | {session_short} | {row.get('approx_hz', float('nan'))} | {duration:.2f}"
         )
 
 
@@ -407,7 +418,7 @@ def replay(
     session_id: str = typer.Option(
         ...,
         "--session-id",
-        help="Session id from manifest",
+        help="Session id (short or full, e.g., ID01_ET_0 or dual__ID01_ET_0)",
     ),
     model_path: Path = typer.Option(
         Path("models") / "best_model.joblib",
@@ -421,7 +432,7 @@ def replay(
     ),
     window_len_sec: float = typer.Option(10.0, "--window-len-sec"),
     stride_sec: float = typer.Option(1.0, "--stride-sec"),
-    speed: float = typer.Option(5.0, "--speed"),
+    speed: float = typer.Option(10.0, "--speed"),
     max_steps: int | None = typer.Option(None, "--max-steps"),
 ) -> None:
     """Replay standardized ET data and stream model output."""
@@ -463,9 +474,28 @@ def replay(
             typer.echo(
                 f"Last score/state/action: {last['score']:.3f} | {last['state']} | {last['action']}"
             )
+            logger.info(
+                "Replay final",
+                extra={
+                    "score": float(last["score"]),
+                    "state": str(last["state"]),
+                    "action": str(last["action"]),
+                },
+            )
 
     logger.info("Replay finished", extra={"out_csv": str(out_csv)})
     typer.echo(f"Wrote replay CSV to {out_csv}")
+
+
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+) -> None:
+    """Run the FastAPI server for WebSocket replay."""
+    setup_logging()
+    get_logger(__name__).info("Starting server", extra={"host": host, "port": port})
+    uvicorn.run("fatigue_xr.server:app", host=host, port=port, reload=False)
 
 
 def load_existing_index(parquet_path: Path) -> pd.DataFrame:
