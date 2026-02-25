@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 import typer
@@ -14,6 +14,7 @@ from fatigue_xr.config import (
     TIMETICK_HZ,
 )
 from fatigue_xr.et_loader import load_et_xlsx
+from fatigue_xr.evaluate import evaluate_saved_model
 from fatigue_xr.featurize import featurize_all
 from fatigue_xr.ingest import MODALITIES, build_dataset_index
 from fatigue_xr.logging_utils import get_logger, log_event, setup_logging
@@ -24,6 +25,7 @@ from fatigue_xr.raw_scan import (
 )
 from fatigue_xr.reporting import render_markdown_table, write_markdown
 from fatigue_xr.standardize_et import sampling_stats, standardize_et
+from fatigue_xr.train import train_and_select_best
 
 app = typer.Typer(add_completion=False)
 
@@ -240,6 +242,110 @@ def featurize(
     typer.echo(f"Wrote features to {out_path}")
 
 
+@app.command("train")
+def train(
+    features_path: Path = typer.Option(
+        FEATURES_DIR / "window_features.parquet",
+        "--features-path",
+        help="Path to window feature parquet",
+    ),
+    model_out: Path = typer.Option(
+        Path("models") / "best_model.joblib",
+        "--model-out",
+        help="Path to save trained model",
+    ),
+    test_size: float = typer.Option(0.2, "--test-size", help="Holdout test size"),
+    random_state: int = typer.Option(42, "--random-state", help="Random seed"),
+) -> None:
+    """Train models and select the best configuration."""
+    setup_logging()
+
+    features_path = features_path.expanduser()
+    model_out = model_out.expanduser()
+    report_path = REPORTS_DIR / "model_report.md"
+    cm_png_path = REPORTS_DIR / "confusion_matrix.png"
+
+    train_and_select_best(
+        features_path=features_path,
+        out_model_path=model_out,
+        report_path=report_path,
+        cm_png_path=cm_png_path,
+        random_state=random_state,
+        test_size=test_size,
+    )
+    typer.echo(f"Wrote model to {model_out}")
+    typer.echo(f"Wrote report to {report_path}")
+
+
+@app.command("evaluate")
+def evaluate(
+    features_path: Path = typer.Option(
+        FEATURES_DIR / "window_features.parquet",
+        "--features-path",
+        help="Path to window feature parquet",
+    ),
+    model_path: Path = typer.Option(
+        Path("models") / "best_model.joblib",
+        "--model-path",
+        help="Path to trained model bundle",
+    ),
+) -> None:
+    """Evaluate a saved model on the full dataset."""
+    setup_logging()
+    features_path = features_path.expanduser()
+    model_path = model_path.expanduser()
+    report_path = REPORTS_DIR / "model_eval_descriptive.md"
+
+    evaluate_saved_model(
+        features_path=features_path,
+        model_path=model_path,
+        report_path=report_path,
+    )
+    typer.echo(f"Wrote report to {report_path}")
+
+
+@app.command("stats")
+def stats(
+    features_path: Path = typer.Option(
+        FEATURES_DIR / "window_features.parquet",
+        "--features-path",
+        help="Path to window feature parquet",
+    ),
+) -> None:
+    """Summarize feature dataset completeness."""
+    setup_logging()
+    logger = get_logger(__name__)
+
+    features_path = features_path.expanduser()
+    if not features_path.exists():
+        raise typer.BadParameter("Feature file not found; run featurize first.")
+
+    df = pd.read_parquet(features_path)
+    stats_summary = compute_feature_stats(df)
+    logger.info("Feature stats", extra=stats_summary)
+
+    typer.echo(f"Windows: {stats_summary['n_windows']}")
+    typer.echo(f"Participants: {stats_summary['n_participants']}")
+    typer.echo(f"Condition counts: {stats_summary['condition_counts']}")
+    typer.echo(
+        "Missing % by group: "
+        f"pupil={stats_summary['missing_pct_pupil']:.2f}, "
+        f"blink={stats_summary['missing_pct_blink']:.2f}, "
+        f"gaze={stats_summary['missing_pct_gaze']:.2f}, "
+        f"aoi={stats_summary['missing_pct_aoi']:.2f}"
+    )
+    if stats_summary["all_nan_columns"]:
+        typer.echo("All-NaN columns:")
+        for col in stats_summary["all_nan_columns"]:
+            typer.echo(f"- {col}")
+    else:
+        typer.echo("All-NaN columns: None")
+
+    report_path = REPORTS_DIR / "feature_stats.md"
+    write_markdown(report_path, build_feature_stats_report(stats_summary))
+    typer.echo(f"Wrote report to {report_path}")
+
+
 def load_existing_index(parquet_path: Path) -> pd.DataFrame:
     return pd.read_parquet(parquet_path)
 
@@ -334,6 +440,97 @@ def write_feature_summary(features_df: pd.DataFrame, report_path: Path) -> None:
         lines.append("No windows produced.")
 
     write_markdown(report_path, lines)
+
+
+def compute_feature_stats(df: pd.DataFrame) -> dict[str, Any]:
+    n_windows = int(len(df))
+    if "participant_id" in df.columns:
+        n_participants = int(cast(int, df["participant_id"].nunique()))
+    else:
+        n_participants = 0
+
+    if "condition" in df.columns:
+        condition_counts = df["condition"].value_counts().to_dict()
+    else:
+        condition_counts = {}
+
+    feature_df = df.drop(
+        columns=[
+            col
+            for col in [
+                "participant_id",
+                "condition",
+                "session_id",
+                "window_start_sec",
+                "window_end_sec",
+            ]
+            if col in df.columns
+        ],
+        errors="ignore",
+    )
+
+    all_nan_columns = [
+        col for col in feature_df.columns if bool(feature_df[col].isna().all())
+    ]
+
+    def missing_pct(prefix: str) -> float:
+        cols = [col for col in feature_df.columns if col.startswith(prefix)]
+        if not cols:
+            return float("nan")
+        return float(feature_df[cols].isna().mean().mean() * 100.0)
+
+    return {
+        "n_windows": n_windows,
+        "n_participants": n_participants,
+        "condition_counts": condition_counts,
+        "missing_pct_pupil": missing_pct("pupil_"),
+        "missing_pct_blink": missing_pct("blink_"),
+        "missing_pct_gaze": missing_pct("gaze_"),
+        "missing_pct_aoi": missing_pct("aoi_"),
+        "all_nan_columns": all_nan_columns,
+    }
+
+
+def build_feature_stats_report(stats_summary: dict[str, Any]) -> list[str]:
+    lines = [
+        "# Feature Stats",
+        "",
+        f"Total windows: {stats_summary['n_windows']}",
+        f"Participants: {stats_summary['n_participants']}",
+        "",
+        "## Condition Counts",
+        "",
+    ]
+
+    condition_counts = cast(dict[str, int], stats_summary.get("condition_counts", {}))
+    if condition_counts:
+        rows = [[key, str(value)] for key, value in condition_counts.items()]
+        lines.extend(render_markdown_table(["Condition", "Count"], rows))
+    else:
+        lines.append("No condition labels found.")
+
+    lines.extend(
+        [
+            "",
+            "## Missing Percentage by Feature Group",
+            "",
+            f"pupil: {stats_summary['missing_pct_pupil']:.2f}%",
+            f"blink: {stats_summary['missing_pct_blink']:.2f}%",
+            f"gaze: {stats_summary['missing_pct_gaze']:.2f}%",
+            f"aoi: {stats_summary['missing_pct_aoi']:.2f}%",
+            "",
+            "## All-NaN Columns",
+            "",
+        ]
+    )
+
+    all_nan_columns = cast(list[str], stats_summary.get("all_nan_columns", []))
+    if all_nan_columns:
+        lines.extend([f"- {col}" for col in all_nan_columns])
+    else:
+        lines.append("- None")
+
+    return lines
 
 
 def build_missing_modalities(df, participants: list[str]) -> dict[str, list[str]]:
