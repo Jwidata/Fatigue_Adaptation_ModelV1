@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from fastapi import FastAPI, WebSocket
@@ -32,8 +32,32 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/routes")
+def list_routes() -> list[dict[str, Any]]:
+    routes = []
+    for route in app.router.routes:
+        routes.append(
+            {
+                "path": getattr(route, "path", ""),
+                "name": getattr(route, "name", ""),
+                "type": type(route).__name__,
+                "methods": list(getattr(route, "methods", [])),
+            }
+        )
+    return routes
+
+
 @app.websocket("/ws/replay")
 async def ws_replay(websocket: WebSocket) -> None:
+    await _handle_ws_replay(websocket)
+
+
+@app.websocket("/ws/replay/")
+async def ws_replay_slash(websocket: WebSocket) -> None:
+    await _handle_ws_replay(websocket)
+
+
+async def _handle_ws_replay(websocket: WebSocket) -> None:
     setup_logging()
     logger = get_logger(__name__)
     await websocket.accept()
@@ -43,9 +67,16 @@ async def ws_replay(websocket: WebSocket) -> None:
     condition = params.get("condition")
     session_id = params.get("session_id")
 
+    expected = ["participant_id", "condition", "session_id"]
     if not participant_id or not condition or not session_id:
-        await websocket.send_json({"error": "participant_id, condition, session_id required"})
-        await websocket.close()
+        await websocket.send_json(
+            {
+                "error": "bad_request",
+                "detail": "participant_id, condition, session_id required",
+                "expected": expected,
+            }
+        )
+        await websocket.close(code=1008)
         return
 
     window_len_sec = float(params.get("window_len_sec", 10))
@@ -61,9 +92,14 @@ async def ws_replay(websocket: WebSocket) -> None:
     logger.info(
         "WebSocket replay connected",
         extra={
+            "url": str(websocket.url),
             "participant_id": participant_id,
             "condition": condition,
             "session_id": session_id,
+            "window_len_sec": window_len_sec,
+            "stride_sec": stride_sec,
+            "speed": speed,
+            "max_steps": max_steps,
         },
     )
 
@@ -75,15 +111,16 @@ async def ws_replay(websocket: WebSocket) -> None:
     try:
         df = load_et_from_manifest(manifest_path, participant_id, condition, session_id)
         if df.empty or "time_sec" not in df.columns:
-            await websocket.send_json({"error": "ET file is empty or missing time_sec"})
-            await websocket.close()
+            await websocket.send_json(
+                {"error": "bad_request", "detail": "ET file missing time_sec"}
+            )
+            await websocket.close(code=1008)
             return
 
         bundle = load_model_bundle(model_path)
-        time_series = pd.to_numeric(df["time_sec"], errors="coerce")
-        time_array = time_series.to_numpy(dtype=float)
-        t0 = float(pd.Series(time_array).min(skipna=True))
-        t1 = float(pd.Series(time_array).max(skipna=True))
+        time_series = cast(pd.Series, pd.to_numeric(df["time_sec"], errors="coerce"))
+        t0 = float(time_series.min(skipna=True))
+        t1 = float(time_series.max(skipna=True))
 
         engine = AdaptationEngine()
         step = 0
@@ -94,7 +131,7 @@ async def ws_replay(websocket: WebSocket) -> None:
                 break
 
             window_end = window_start + window_len_sec
-            mask = (time_array >= window_start) & (time_array < window_end)
+            mask = (time_series >= window_start) & (time_series < window_end)
             window_df = df.loc[mask].copy()
             feats = window_features(window_df, window_len_sec)
             score = predict_score(bundle, feats)
@@ -137,9 +174,11 @@ async def ws_replay(websocket: WebSocket) -> None:
     except Exception as exc:
         logger.info("WebSocket replay error", extra={"error": str(exc)})
         try:
-            await websocket.send_json({"error": str(exc)})
-        except Exception:
-            pass
+            await websocket.send_json(
+                {"error": "server_exception", "detail": str(exc)}
+            )
+        finally:
+            await websocket.close(code=1011)
     finally:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(results).to_csv(out_path, index=False)
@@ -149,22 +188,35 @@ async def ws_replay(websocket: WebSocket) -> None:
 def _serve_demo_client() -> HTMLResponse:
     client_path = Path("reports") / "demo_client.html"
     if client_path.exists():
-        return HTMLResponse(client_path.read_text(encoding="utf-8"))
-
-    html = """
+        html = client_path.read_text(encoding="utf-8")
+    else:
+        html = """
 <!doctype html>
-<html lang="en">
+<html lang=\"en\">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
     <title>Fatigue XR Demo</title>
   </head>
   <body>
     <h1>Fatigue XR Demo</h1>
     <p>Demo client not found.</p>
-    <p>Run the CLI to generate the client:</p>
-    <pre>reports/demo_client.html</pre>
+    <p>Expected: <code>reports/demo_client.html</code></p>
   </body>
 </html>
 """
+
+    banner = """
+<div style=\"background:#0f172a;color:#fff;padding:12px 16px;border-radius:8px;margin-bottom:16px;\">
+  <div style=\"font-size:18px;font-weight:600;\">Server running</div>
+  <div style=\"opacity:0.85;\">WebSocket endpoint: <code style=\"color:#fff;\">/ws/replay</code></div>
+  <div style=\"opacity:0.85;\">Example: <code style=\"color:#fff;\">ws://127.0.0.1:8000/ws/replay?participant_id=ID01&amp;condition=dual&amp;session_id=ID01_ET_0&amp;speed=10</code></div>
+</div>
+"""
+
+    if "<body>" in html:
+        html = html.replace("<body>", "<body>" + banner, 1)
+    else:
+        html = banner + html
+
     return HTMLResponse(html)
