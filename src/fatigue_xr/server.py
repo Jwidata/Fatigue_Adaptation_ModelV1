@@ -169,6 +169,11 @@ async def _handle_ws_replay(websocket: WebSocket) -> None:
             if speed > 0:
                 await asyncio.sleep(stride_sec / speed)
 
+        await websocket.send_json(
+            {"event": "completed", "detail": "Replay finished normally"}
+        )
+        await websocket.close(code=1000)
+
     except WebSocketDisconnect:
         logger.info("WebSocket replay disconnected")
     except Exception as exc:
