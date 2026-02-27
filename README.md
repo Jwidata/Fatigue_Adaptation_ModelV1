@@ -1,205 +1,160 @@
-# Fatigue XR Demo
+# Project Overview
 
-This project demonstrates a full, transparent pipeline for eye‑tracking fatigue/cognitive‑load analysis. It starts from raw participant folders, builds a dataset index, standardizes ET streams, extracts windowed features, trains a group‑aware classifier (no participant leakage), and replays model decisions in pseudo‑real time for XR adaptation. A WebSocket server streams those decisions to a demo client.
+This repo implements an end‑to‑end eye‑tracking workload pipeline for classifying **Single vs Dual** task condition, replaying model predictions in pseudo‑real time, and mapping scores to XR adaptation actions. It keeps raw data untouched, standardizes ET streams, extracts windowed features, trains a group‑aware model (no participant leakage), and streams replay decisions via CLI or WebSocket.
 
-The goals are:
+# Repo Structure
 
-- Make every step auditable and reproducible.
-- Keep raw input untouched (`Data/`).
-- Use simple, well‑documented rules for labeling and adaptation.
-
-## Project Layout
-
-- `Data/` raw input (do not move/rename)
-- `data/processed/` processed outputs (index, standardized ET, manifests)
-- `data/features/` window features
-- `models/` trained model bundles
-- `reports/` markdown reports, replay CSVs, demo client
-- `src/fatigue_xr/` source package
-- `tests/`, `notebooks/`
-
-## Requirements
-
-- Python 3.11+
-- Dependencies are managed in `pyproject.toml`
-
-## Setup
-
-Windows (PowerShell):
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```
+Data/                # Raw dataset (ID01..ID28). Untouched and gitignored.
+data/processed/      # Index + standardized ET + manifests
+data/features/       # Window features
+models/              # Trained model bundles
+reports/             # Markdown reports, replay CSVs, demo client
+src/                 # Python package (fatigue_xr)
 ```
 
-macOS/Linux (bash/zsh):
+# Setup
+
+Python 3.11+ recommended.
+
+Create a venv and install:
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-```
-
-Install in editable mode:
-
-```bash
 pip install -e .
 ```
 
-## End‑to‑End Pipeline (What Happens and Why)
+Notes:
 
-### 1) Scan raw structure
-Command:
+- On WSL/Linux, use `python3`.
+- Inside the venv, `python` should work.
+
+# Pipeline: Step‑by‑step Commands
+
+## 1) Scan raw
 
 ```bash
 python -m fatigue_xr.cli scan-raw --raw-root Data
 ```
 
-What it does:
+Creates a structural report at `reports/raw_scan.md`.
 
-- Discovers participant folders (ID*)
-- Counts files by modality (ET/NBACK/DRT/TLX)
-- Writes a summary report to `reports/raw_scan.md`
-
-Why it exists:
-
-- Confirms the raw dataset is consistent before processing.
-- Highlights missing modalities without stopping the pipeline.
-
-### 2) Build dataset index
-Command:
+## 2) Ingest index
 
 ```bash
 python -m fatigue_xr.cli ingest --raw-root Data
 ```
 
-What it does:
+Creates:
 
-- Recursively indexes all files in participant folders
-- Infers modality and condition from file paths
-- Creates a stable per‑file index (`data/processed/dataset_index.parquet` and `.csv`)
+- `data/processed/dataset_index.parquet`
+- `data/processed/dataset_index.csv`
+- `reports/dataset_inventory.md`
 
-Why it exists:
+## 3) Standardize ET
 
-- Provides a single source of truth for downstream steps.
-- Makes later operations deterministic and auditable.
-
-### 3) Standardize ET streams
-Command:
+Quick check:
 
 ```bash
 python -m fatigue_xr.cli standardize-et --limit 2
+```
+
+Full run:
+
+```bash
 python -m fatigue_xr.cli standardize-et
 ```
 
-What it does:
+Outputs:
 
-- Loads ET Excel files
-- Normalizes column names into canonical forms
-- Adds time axis, validity flags, and sampling statistics
-- Writes standardized parquet files to `data/processed/et/`
-- Writes `data/processed/et_manifest.parquet`
+- `data/processed/et/*.parquet`
+- `data/processed/et_manifest.parquet`
 
-Why it exists:
-
-- Ensures all ET files use a common schema.
-- Keeps raw data untouched while producing analysis‑ready streams.
-
-### 4) Extract sliding‑window features
-Command:
+## 4) Featurize (windowed)
 
 ```bash
 python -m fatigue_xr.cli featurize --window-len-sec 10 --stride-sec 1
 ```
 
-What it does:
+Optional limit:
 
-- Generates windowed features from standardized ET
-- Computes pupil, gaze, blink, AOI features where available
-- Writes `data/features/window_features.parquet` and `.csv`
+```bash
+python -m fatigue_xr.cli featurize --limit-files 2
+```
 
-Why it exists:
+Outputs:
 
-- Converts high‑frequency time series into stable, ML‑ready features.
-- Keeps windowing consistent for model training and replay.
+- `data/features/window_features.parquet`
+- `data/features/window_features.csv`
+- `reports/feature_summary.md`
 
-### 5) Feature stats and missingness
-Command:
+## 5) Feature stats (missingness)
 
 ```bash
 python -m fatigue_xr.cli stats --features-path data/features/window_features.parquet
 ```
 
-What it does:
+Creates `reports/feature_stats.md`.
 
-- Reports window counts, participant counts, condition balance
-- Summarizes missingness by feature group
-- Lists all‑NaN features
-- Writes `reports/feature_stats.md`
+Notes:
 
-Why it exists:
+- AOI features may be entirely missing depending on the dataset; such columns are automatically dropped during training.
 
-- Makes data quality visible before model training.
-- Documents which features are excluded (all‑NaN).
+## 6) Train + Evaluate
 
-### 6) Train with group‑aware split
-Command:
+Train with group‑aware split (participant leakage prevented):
 
 ```bash
 python -m fatigue_xr.cli train --features-path data/features/window_features.parquet
 ```
 
-What it does:
-
-- Defines label: `dual` = 1, `single` = 0
-- Uses group‑aware split by `participant_id` to avoid leakage
-- Runs CV (GroupKFold) on train only
-- Selects best model by ROC‑AUC (tie‑break: F1)
-- Saves model bundle to `models/best_model.joblib`
-- Writes report to `reports/model_report.md`
-
-Why it exists:
-
-- Avoids optimistic results from participant leakage.
-- Produces an auditable model selection process.
-
-### 7) Evaluate model (descriptive)
-Command:
+Evaluate descriptively on full dataset:
 
 ```bash
 python -m fatigue_xr.cli evaluate --features-path data/features/window_features.parquet
 ```
 
-What it does:
+Reports and artifacts:
 
-- Evaluates the saved model on the full dataset
-- Writes `reports/model_eval_descriptive.md`
+- `reports/model_report.md`
+- `reports/confusion_matrix.png`
+- `reports/feature_importance.csv`
+- `reports/model_eval_descriptive.md`
+- `models/best_model.joblib`
 
-Why it exists:
+Model selection:
 
-- Provides a quick descriptive sanity check.
-- Clearly labeled as not leak‑safe.
+- Automatically selected based on **GroupKFold CV ROC‑AUC**, tie‑break by **F1**.
+- The default winner is typically Logistic Regression on `pupil_only`, but selection is data‑driven.
 
-### 8) Replay model decisions (pseudo‑real time)
-Commands:
+# Replay Demo (CLI)
+
+List available ET sessions:
 
 ```bash
 python -m fatigue_xr.cli list-et
+python -m fatigue_xr.cli list-et --participant-id ID01 --condition dual
+```
+
+Replay a session:
+
+```bash
 python -m fatigue_xr.cli replay --participant-id ID01 --condition dual --session-id ID01_ET_0 --speed 20 --max-steps 60
 ```
 
-What it does:
+Notes:
 
-- Streams standardized ET through the window feature extractor
-- Applies the trained model to each window
-- Feeds scores into a hysteresis + cooldown state machine
-- Writes replay CSV to `reports/replay_{participant_id}_{condition}_{session_id}.csv`
+- `session_id` can be **short** (`ID01_ET_0`) or **full** (`dual__ID01_ET_0`).
+- `window_len_sec` and `stride_sec` control the sliding window.
 
-Why it exists:
+Interpretation:
 
-- Simulates real‑time inference and adaptation actions.
-- Produces a traceable output for demos or debugging.
+- `score`: model probability of **Dual** (higher ⇒ higher load)
+- `state`: LOW / MEDIUM / HIGH
+- `action`: NO_CHANGE / REDUCE_CLUTTER / SLOW_ANIMATIONS / SUGGEST_BREAK
 
-## WebSocket Server + Demo Client
+# Live Streaming Demo (FastAPI + WebSocket)
 
 Start the server:
 
@@ -207,7 +162,14 @@ Start the server:
 python -m fatigue_xr.cli serve --host 127.0.0.1 --port 8000
 ```
 
-Open in browser:
+Verify health and routes:
+
+```bash
+http://127.0.0.1:8000/health
+http://127.0.0.1:8000/routes
+```
+
+Open the browser client:
 
 - `http://127.0.0.1:8000/`
 - `http://127.0.0.1:8000/client`
@@ -218,19 +180,49 @@ WebSocket endpoint:
 ws://127.0.0.1:8000/ws/replay?participant_id=ID01&condition=dual&session_id=ID01_ET_0&speed=10
 ```
 
-The server streams JSON messages per window and writes a CSV to `reports/ws_replay_{participant_id}_{condition}_{session_id}.csv`.
+Normal completion closes with code **1000**. Errors are sent as JSON and then closed.
 
-## Outputs
+# Interactive Demo Client
 
-- `data/processed/dataset_index.parquet`
-- `data/processed/et/*.parquet`
-- `data/processed/et_manifest.parquet`
-- `data/features/window_features.parquet` and `data/features/window_features.csv`
-- `models/best_model.joblib`
-- `reports/*.md`, `reports/confusion_matrix.png`, replay CSVs
+Start the server:
 
-## Notes
+```bash
+python -m fatigue_xr.cli serve --host 127.0.0.1 --port 8000
+```
 
-- Raw data in `Data/` is never modified.
-- All feature and model outputs are derived from standardized ET only.
-- The adaptation engine uses fixed thresholds and cooldowns for auditability.
+Open:
+
+- `http://127.0.0.1:8000/`
+
+Use the Stream Source selector:
+
+- Replay (Dataset)
+- Remote WebSocket URL
+- Synthetic (Demo Generator)
+
+# Windows one-click demo
+
+Double click `run_demo_windows.bat`.
+
+# Troubleshooting
+
+- **python vs python3**
+  Use `python3` on WSL/Linux. Inside venv, `python` should work.
+
+- **WebSocket connection failing**
+  Install WebSocket backend for uvicorn:
+  ```bash
+  pip install "uvicorn[standard]" websockets wsproto
+  ```
+
+- **session_id mismatch**
+  You can pass short or full IDs. The matcher supports suffixes (`dual__ID01_ET_0` vs `ID01_ET_0`).
+
+- **AOI features missing**
+  This is expected when AOI is not present. All‑NaN columns are auto‑dropped before training.
+
+# Reproducibility Notes
+
+- Splits are **group‑aware** by `participant_id` to avoid leakage.
+- Model selection uses **CV ROC‑AUC**, tie‑break by **F1**.
+- Outputs are deterministic with `random_state=42`.

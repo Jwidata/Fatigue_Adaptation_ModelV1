@@ -3,80 +3,829 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Fatigue XR Replay Demo</title>
+    <title>Fatigue XR Interactive Demo</title>
     <style>
-      body { font-family: "Segoe UI", Tahoma, sans-serif; margin: 20px; }
-      .row { margin-bottom: 10px; }
-      label { display: inline-block; width: 140px; }
-      input { padding: 6px; width: 260px; }
-      button { padding: 8px 16px; }
-      #status { font-size: 32px; margin: 16px 0; }
-      #actionChanged { color: #b00020; font-weight: bold; height: 20px; }
-      #log { border: 1px solid #ccc; padding: 10px; height: 260px; overflow-y: auto; background: #fafafa; }
-      #wsUrl { font-family: monospace; background: #f3f3f3; padding: 6px; display: inline-block; }
-      #banner { background: #0f172a; color: #fff; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
-      #banner code { color: #fff; }
+      :root {
+        --bg: #0b1220;
+        --panel: #111827;
+        --card: #0f172a;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #22d3ee;
+        --accent-2: #38bdf8;
+        --danger: #f43f5e;
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --motion-scale: 1;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+        background: radial-gradient(1200px 600px at 20% 10%, #0f172a 0%, #0b1220 50%, #070c15 100%);
+        color: var(--text);
+      }
+
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #1f2937;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 600;
+      }
+
+      .container {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 20px;
+        padding: 20px;
+      }
+
+      @media (max-width: 960px) {
+        .container { grid-template-columns: 1fr; }
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+      }
+
+      .section-title {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 0 0 12px 0;
+      }
+
+      .help-text {
+        font-size: 12px;
+        color: var(--muted);
+        margin: -6px 0 12px 0;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      input, select {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+        background: #0b1220;
+        color: var(--text);
+        margin-bottom: 12px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .buttons {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+        background: #0b1220;
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid #1f2937;
+        background: #0b1220;
+      }
+
+      .chip.streaming { border-color: var(--success); color: var(--success); }
+      .chip.error { border-color: var(--danger); color: var(--danger); }
+      .chip.paused { border-color: var(--warning); color: var(--warning); }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        background: #0b1220;
+        border: 1px solid #1f2937;
+        padding: 8px;
+        border-radius: 8px;
+        word-break: break-all;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .tab-btn {
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid #1f2937;
+        background: #0b1220;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .tab-btn.active {
+        color: var(--text);
+        border-color: var(--accent-2);
+        box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3);
+      }
+
+      .tab-content { display: none; }
+      .tab-content.active { display: block; }
+
+      .viewport-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      @media (max-width: 840px) {
+        .viewport-compare { grid-template-columns: 1fr; }
+      }
+
+      .viewport-panel {
+        border: 1px solid #1f2937;
+        border-radius: 14px;
+        background: #0b1220;
+        padding: 10px;
+      }
+
+      .viewport-title {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .viewport {
+        background: linear-gradient(160deg, #0b1220, #111827);
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        height: 280px;
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 0 0 1px #111827;
+      }
+
+      .viewport.slow::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 20% 30%, rgba(56, 189, 248, 0.08), transparent 35%),
+          radial-gradient(circle at 80% 70%, rgba(34, 211, 238, 0.06), transparent 40%),
+          linear-gradient(120deg, rgba(15, 23, 42, 0.2), rgba(15, 23, 42, 0));
+        opacity: 0.75;
+        animation: drift calc(12s / var(--motion-scale)) linear infinite;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      @keyframes drift {
+        0% { transform: translateX(-6%) translateY(0); }
+        50% { transform: translateX(6%) translateY(-4%); }
+        100% { transform: translateX(-6%) translateY(0); }
+      }
+
+      .viewport.high {
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.4), 0 0 25px rgba(56, 189, 248, 0.4);
+        animation: glow 2s ease-in-out infinite;
+      }
+
+      @keyframes glow {
+        0%, 100% { box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35), 0 0 15px rgba(56, 189, 248, 0.2); }
+        50% { box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.55), 0 0 28px rgba(56, 189, 248, 0.45); }
+      }
+
+      .widget-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        padding: 14px;
+        position: relative;
+        z-index: 2;
+      }
+
+      .widget {
+        height: 64px;
+        border-radius: 10px;
+        background: #0f172a;
+        border: 1px solid #1f2937;
+        position: relative;
+        overflow: hidden;
+        animation: float 4s ease-in-out infinite;
+        animation-duration: calc(4s / var(--motion-scale));
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-6px); }
+      }
+
+      .widget-title {
+        font-size: 12px;
+        color: #cbd5f5;
+        font-weight: 600;
+      }
+
+      .widget-body {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .hidden-tag {
+        font-size: 10px;
+        color: var(--muted);
+        border: 1px dashed #1f2937;
+        border-radius: 999px;
+        padding: 2px 6px;
+        align-self: flex-start;
+        display: none;
+      }
+
+      .widget.hidden {
+        opacity: 0.28;
+        filter: grayscale(0.2);
+      }
+
+      .widget.hidden .hidden-tag {
+        display: inline-flex;
+      }
+
+      .status-overlay {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 10px;
+        background: rgba(8, 12, 20, 0.55);
+        z-index: 3;
+        text-align: center;
+      }
+
+      .status-message {
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      .spinner {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 2px solid rgba(148, 163, 184, 0.4);
+        border-top-color: var(--accent);
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .completed-badge {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid #1f2937;
+        color: var(--muted);
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        display: none;
+        z-index: 2;
+      }
+
+      .high-badge {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(244, 63, 94, 0.15);
+        border: 1px solid rgba(244, 63, 94, 0.5);
+        color: #fecdd3;
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        display: none;
+        z-index: 2;
+      }
+
+      .break-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(8, 12, 20, 0.8);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 4;
+      }
+
+      .break-overlay.active { display: flex; }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+
+      .metric-card {
+        background: var(--card);
+        border: 1px solid #1f2937;
+        border-radius: 10px;
+        padding: 12px;
+        min-height: 70px;
+      }
+
+      .metric-value { font-size: 20px; font-weight: 600; }
+      .metric-label { font-size: 12px; color: var(--muted); }
+      .metric-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+      .score-line {
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .score-definitions {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+
+      .action-panel {
+        margin-top: 12px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid #1f2937;
+        background: #0f172a;
+        display: grid;
+        gap: 8px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .action-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 13px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid #1f2937;
+        background: rgba(15, 23, 42, 0.8);
+        color: var(--accent);
+      }
+
+      .action-desc {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .action-panel.animate {
+        animation: actionSlide 0.6s ease;
+      }
+
+      .action-panel.animate::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(34, 211, 238, 0.12);
+        animation: actionFlash 0.6s ease;
+        pointer-events: none;
+      }
+
+      @keyframes actionSlide {
+        from { transform: translateY(6px); opacity: 0.6; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+
+      @keyframes actionFlash {
+        from { opacity: 0.35; }
+        to { opacity: 0; }
+      }
+
+      .why-line {
+        margin-top: 10px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      canvas { width: 100%; height: 120px; background: #0b1220; border-radius: 8px; border: 1px solid #1f2937; }
+
+      details { background: #0b1220; border: 1px solid #1f2937; border-radius: 8px; padding: 8px; }
+      summary { cursor: pointer; color: var(--muted); }
+      #log { max-height: 180px; overflow-y: auto; font-size: 12px; }
+
+      .explain-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      @media (max-width: 960px) {
+        .explain-grid { grid-template-columns: 1fr; }
+      }
+
+      .feature-list {
+        display: grid;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .feature-values {
+        font-size: 12px;
+        color: var(--muted);
+        display: grid;
+        gap: 4px;
+      }
+
+      .bar-chart {
+        width: 100%;
+        height: 260px;
+        background: #0b1220;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+      }
+
+      .validate-grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .artifact-img {
+        max-width: 100%;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+        background: #0b1220;
+      }
+
+      .build-stamp {
+        padding: 12px 24px 24px 24px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: right;
+      }
     </style>
   </head>
   <body>
-    <div id="banner">
-      <div style="font-size:18px;font-weight:600;">Server running</div>
-      <div style="opacity:0.85;">WebSocket endpoint: <code>/ws/replay</code></div>
-      <div style="opacity:0.85;">Example: <code>ws://127.0.0.1:8000/ws/replay?participant_id=ID01&amp;condition=dual&amp;session_id=ID01_ET_0&amp;speed=10</code></div>
+    <header>
+      <h1>Fatigue XR Interactive Demo</h1>
+      <span id="statusChip" class="chip">DISCONNECTED</span>
+    </header>
+
+    <div class="container">
+      <div class="panel">
+        <div class="section-title">Stream Source</div>
+        <label>Stream Source</label>
+        <select id="sourceSelect">
+          <option value="replay" selected>Replay (Dataset)</option>
+          <option value="remote">Remote WebSocket URL</option>
+          <option value="synthetic">Synthetic (Demo Generator)</option>
+        </select>
+
+        <div id="replayInputs">
+          <label>Participant (ID)</label>
+          <input id="participantId" value="ID01" />
+          <div class="help-text">Which subject's recording to replay (e.g., ID01).</div>
+          <label>Task Condition</label>
+          <input id="condition" value="dual" />
+          <div class="help-text">single = easier task, dual = harder task. Model predicts probability of dual.</div>
+          <label>Session</label>
+          <input id="sessionId" value="ID01_ET_0" />
+          <div class="help-text">Which recording file to stream (e.g., ID01_ET_0).</div>
+          <div class="row">
+            <div>
+              <label>Analysis Window (seconds)</label>
+              <input id="windowLen" value="10" />
+              <div class="help-text">Each prediction uses the last N seconds of eye-tracking data (default 10s).</div>
+            </div>
+            <div>
+              <label>Update Rate (seconds)</label>
+              <input id="stride" value="1" />
+              <div class="help-text">How often predictions are produced (default every 1s).</div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Replay Speed (x)</label>
+              <input id="speed" value="10" />
+              <div class="help-text">How fast to replay compared to real time (10x = 10 seconds of data per 1 second).</div>
+            </div>
+            <div>
+              <label>Max Updates (optional)</label>
+              <input id="maxSteps" value="" placeholder="(optional)" />
+              <div class="help-text">Stop after N updates. Leave empty to run until the session ends.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="remoteInputs" style="display:none;">
+          <label>Remote WebSocket URL</label>
+          <input id="remoteUrl" placeholder="wss://example.com/ws/replay?..." />
+        </div>
+
+        <div id="syntheticInputs" style="display:none;">
+          <label>Interval (ms)</label>
+          <input id="syntheticInterval" value="250" />
+        </div>
+
+        <div class="section-title">Controls</div>
+        <div class="buttons">
+          <button id="connectBtn">Connect</button>
+          <button id="disconnectBtn" disabled>Disconnect</button>
+          <button id="pauseBtn" disabled>Pause</button>
+          <button id="resumeBtn" disabled>Resume</button>
+          <button id="clearLogBtn">Clear Log</button>
+        </div>
+
+        <label>Speed (Replay)</label>
+        <input id="speedSlider" type="range" min="1" max="30" value="10" />
+
+        <div class="section-title">WebSocket URL</div>
+        <div id="wsUrl" class="mono">--</div>
+      </div>
+
+      <div class="panel">
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="live">Live</button>
+          <button class="tab-btn" data-tab="explain">Explain</button>
+          <button class="tab-btn" data-tab="validate">Validate</button>
+        </div>
+
+        <div id="tab-live" class="tab-content active">
+          <div class="section-title">Simulated XR Viewport</div>
+          <div class="viewport-compare">
+            <div class="viewport-panel">
+              <div class="viewport-title">Baseline UI (no adaptation)</div>
+              <div id="baselineViewport" class="viewport">
+                <div class="widget-grid">
+                  <div class="widget" data-widget="1">
+                    <div class="widget-title">Navigation</div>
+                    <div class="widget-body">Next step: Dock A</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="2">
+                    <div class="widget-title">Task List</div>
+                    <div class="widget-body">3 items remaining</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="3">
+                    <div class="widget-title">Hints</div>
+                    <div class="widget-body">Next: check fuel</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="4">
+                    <div class="widget-title">Warnings</div>
+                    <div class="widget-body">2 alerts active</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="5">
+                    <div class="widget-title">Mini-map</div>
+                    <div class="widget-body">Zoom: 120 m</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="6">
+                    <div class="widget-title">Status</div>
+                    <div class="widget-body">All systems nominal</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="viewport-panel">
+              <div class="viewport-title">Adapted UI (current action)</div>
+              <div id="adaptedViewport" class="viewport">
+                <div class="widget-grid">
+                  <div class="widget" data-widget="1">
+                    <div class="widget-title">Navigation</div>
+                    <div class="widget-body">Next step: Dock A</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="2">
+                    <div class="widget-title">Task List</div>
+                    <div class="widget-body">3 items remaining</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="3">
+                    <div class="widget-title">Hints</div>
+                    <div class="widget-body">Next: check fuel</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="4">
+                    <div class="widget-title">Warnings</div>
+                    <div class="widget-body">2 alerts active</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="5">
+                    <div class="widget-title">Mini-map</div>
+                    <div class="widget-body">Zoom: 120 m</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                  <div class="widget" data-widget="6">
+                    <div class="widget-title">Status</div>
+                    <div class="widget-body">All systems nominal</div>
+                    <div class="hidden-tag">Hidden (clutter reduced)</div>
+                  </div>
+                </div>
+                <div id="completedBadge" class="completed-badge">Replay completed</div>
+                <div id="highBadge" class="high-badge">High load</div>
+                <div id="statusOverlay" class="status-overlay">
+                  <div id="statusSpinner" class="spinner"></div>
+                  <div id="statusMessage" class="status-message">Loading stream...</div>
+                </div>
+                <div id="breakOverlay" class="break-overlay">
+                  <div style="font-size:20px;font-weight:600;">Take a short break</div>
+                  <button id="dismissBreakBtn">Dismiss</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="why-line" id="whyLine">Why: score=-- -> state=-- -> action=--</div>
+
+          <div class="section-title" style="margin-top:16px;">Live Metrics</div>
+          <div class="score-line" id="scoreLine">Score: -- | State: -- | Action: --</div>
+          <div class="score-definitions">Score = probability of dual. State = LOW/MEDIUM/HIGH. Action = interface adaptation.</div>
+          <div class="action-panel" id="actionPanel">
+            <div class="action-badge" id="actionBadge">NO_CHANGE</div>
+            <div class="action-desc" id="actionDesc">Interface stays normal.</div>
+          </div>
+          <div class="metrics" style="margin-top:12px;">
+            <div class="metric-card">
+              <div class="metric-value" id="pupilQuality">--</div>
+              <div class="metric-label">pupil_valid_frac</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value" id="nSamples">--</div>
+              <div class="metric-label">n_samples_window</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value" id="latency">--</div>
+              <div class="metric-label">Delay (ms)</div>
+              <div class="metric-sub" id="jitter">Update jitter: --</div>
+            </div>
+          </div>
+
+          <div class="section-title" style="margin-top:16px;">Timeline</div>
+          <div class="timeline">
+            <canvas id="sparkline" width="600" height="120"></canvas>
+            <div id="eventTimeline" class="mono" style="min-height:60px;">--</div>
+            <details>
+              <summary>Raw Log</summary>
+              <div id="log"></div>
+            </details>
+          </div>
+        </div>
+
+        <div id="tab-explain" class="tab-content">
+          <div class="section-title">Explain</div>
+          <div class="mono" style="margin-bottom:12px;">
+            Logistic Regression combines multiple eye-tracking features into a single score.
+            Each feature has a weight: positive pushes the score toward dual, negative pushes toward single.
+            The output is a probability between 0 and 1.
+          </div>
+          <div class="explain-grid">
+            <div>
+              <div class="section-title">Model Features (pupil-only)</div>
+              <div id="featureList" class="feature-list">Loading feature list...</div>
+              <div class="section-title" style="margin-top:16px;">Latest Window Values</div>
+              <div id="featureValues" class="feature-values">(feature values computed server-side; coming next)</div>
+            </div>
+            <div>
+              <div class="section-title">Global Feature Importance</div>
+              <canvas id="importanceChart" class="bar-chart" width="600" height="260"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-validate" class="tab-content">
+          <div class="section-title">Validate</div>
+          <div class="validate-grid">
+            <div class="mono" id="modelSummary">Loading model summary...</div>
+            <div>
+              <a id="reportLink" href="/api/artifact/model_report.md" target="_blank" rel="noreferrer">Open model_report.md</a>
+            </div>
+            <div id="confusionWrapper"></div>
+            <div class="help-text">Model selection was based on GroupKFold CV ROC-AUC; tie-break F1.</div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <h1>Fatigue XR Replay Demo</h1>
-
-    <div class="row">
-      <label>Participant</label>
-      <input id="participantId" value="ID01" />
-    </div>
-    <div class="row">
-      <label>Condition</label>
-      <input id="condition" value="dual" />
-    </div>
-    <div class="row">
-      <label>Session ID</label>
-      <input id="sessionId" value="ID01_ET_0" />
-    </div>
-    <div class="row">
-      <label>Window Len</label>
-      <input id="windowLen" value="10" />
-    </div>
-    <div class="row">
-      <label>Stride</label>
-      <input id="stride" value="1" />
-    </div>
-    <div class="row">
-      <label>Speed</label>
-      <input id="speed" value="10" />
-    </div>
-    <div class="row">
-      <label>Max Steps</label>
-      <input id="maxSteps" value="" placeholder="(optional)" />
-    </div>
-    <div class="row">
-      <button id="connectBtn">Connect</button>
-      <button id="disconnectBtn" disabled>Disconnect</button>
-    </div>
-
-    <div class="row">
-      <label>WS URL</label>
-      <span id="wsUrl">--</span>
-    </div>
-
-    <div id="status">Score: -- | State: -- | Action: --</div>
-    <div id="actionChanged"></div>
-    <div id="log"></div>
+    <div class="build-stamp">Build: 2026-02-27</div>
 
     <script>
-      let ws = null;
-      const logEl = document.getElementById("log");
-      const statusEl = document.getElementById("status");
-      const actionChangedEl = document.getElementById("actionChanged");
+      const sourceSelect = document.getElementById("sourceSelect");
+      const replayInputs = document.getElementById("replayInputs");
+      const remoteInputs = document.getElementById("remoteInputs");
+      const syntheticInputs = document.getElementById("syntheticInputs");
       const connectBtn = document.getElementById("connectBtn");
       const disconnectBtn = document.getElementById("disconnectBtn");
+      const pauseBtn = document.getElementById("pauseBtn");
+      const resumeBtn = document.getElementById("resumeBtn");
+      const clearLogBtn = document.getElementById("clearLogBtn");
       const wsUrlEl = document.getElementById("wsUrl");
+      const statusChip = document.getElementById("statusChip");
+      const scoreLine = document.getElementById("scoreLine");
+      const pupilQuality = document.getElementById("pupilQuality");
+      const nSamples = document.getElementById("nSamples");
+      const latencyEl = document.getElementById("latency");
+      const baselineViewport = document.getElementById("baselineViewport");
+      const adaptedViewport = document.getElementById("adaptedViewport");
+      const breakOverlay = document.getElementById("breakOverlay");
+      const dismissBreakBtn = document.getElementById("dismissBreakBtn");
+      const logEl = document.getElementById("log");
+      const sparkline = document.getElementById("sparkline");
+      const eventTimeline = document.getElementById("eventTimeline");
+      const speedSlider = document.getElementById("speedSlider");
+      const statusOverlay = document.getElementById("statusOverlay");
+      const statusSpinner = document.getElementById("statusSpinner");
+      const completedBadge = document.getElementById("completedBadge");
+      const highBadge = document.getElementById("highBadge");
+      const actionPanel = document.getElementById("actionPanel");
+      const actionBadge = document.getElementById("actionBadge");
+      const actionDesc = document.getElementById("actionDesc");
+      const jitterEl = document.getElementById("jitter");
+      const whyLine = document.getElementById("whyLine");
+      const featureListEl = document.getElementById("featureList");
+      const featureValuesEl = document.getElementById("featureValues");
+      const importanceChart = document.getElementById("importanceChart");
+      const modelSummary = document.getElementById("modelSummary");
+      const reportLink = document.getElementById("reportLink");
+      const confusionWrapper = document.getElementById("confusionWrapper");
+
+      let ws = null;
+      let paused = false;
+      let syntheticTimer = null;
+      let lastAction = null;
+      let scoreHistory = [];
+      let connectTimer = null;
+      let currentStatus = "DISCONNECTED";
+      let lastMessageTime = null;
+      let lastQa = null;
+
+      function setStatus(newStatus) {
+        currentStatus = newStatus;
+        statusChip.textContent = newStatus;
+        statusChip.className = "chip";
+        if (newStatus === "STREAMING") statusChip.classList.add("streaming");
+        if (newStatus === "PAUSED") statusChip.classList.add("paused");
+        if (newStatus === "ERROR" || newStatus === "TIMEOUT") statusChip.classList.add("error");
+
+        const showLoading = newStatus === "LOADING";
+        statusOverlay.style.display = showLoading ? "flex" : "none";
+        statusSpinner.style.display = showLoading ? "block" : "none";
+        completedBadge.style.display = newStatus === "COMPLETED" ? "block" : "none";
+      }
 
       function appendLog(line) {
         const item = document.createElement("div");
@@ -86,6 +835,193 @@
           logEl.removeChild(logEl.firstChild);
         }
         logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function updateViewport(state, action) {
+        adaptedViewport.classList.toggle("high", state === "HIGH");
+        highBadge.style.display = state === "HIGH" ? "block" : "none";
+        adaptedViewport.classList.toggle("slow", action === "SLOW_ANIMATIONS");
+        const widgets = adaptedViewport.querySelectorAll(".widget");
+        widgets.forEach((w, idx) => {
+          if (action === "REDUCE_CLUTTER" && idx >= 3) {
+            w.classList.add("hidden");
+          } else {
+            w.classList.remove("hidden");
+          }
+        });
+
+        if (action === "SUGGEST_BREAK") {
+          breakOverlay.classList.add("active");
+        } else {
+          breakOverlay.classList.remove("active");
+        }
+
+        if (action === "SLOW_ANIMATIONS") {
+          document.documentElement.style.setProperty("--motion-scale", "0.6");
+        } else {
+          document.documentElement.style.setProperty("--motion-scale", "1");
+        }
+      }
+
+      function updateActionPanel(action) {
+        const descriptions = {
+          NO_CHANGE: "Interface stays normal.",
+          REDUCE_CLUTTER: "Hide non-essential panels to reduce cognitive load.",
+          SLOW_ANIMATIONS: "Slow down motion to reduce distraction.",
+          SUGGEST_BREAK: "User has sustained high load; suggest a short break.",
+        };
+        actionBadge.textContent = action || "NO_CHANGE";
+        actionDesc.textContent = descriptions[action] || "Interface stays normal.";
+      }
+
+      function drawSparkline() {
+        const ctx = sparkline.getContext("2d");
+        ctx.clearRect(0, 0, sparkline.width, sparkline.height);
+        ctx.strokeStyle = "#22d3ee";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        scoreHistory.forEach((s, i) => {
+          const x = (i / Math.max(scoreHistory.length - 1, 1)) * sparkline.width;
+          const y = (1 - s) * (sparkline.height - 10) + 5;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      function drawFeatureImportance(rows) {
+        const ctx = importanceChart.getContext("2d");
+        ctx.clearRect(0, 0, importanceChart.width, importanceChart.height);
+        if (!rows.length) {
+          ctx.fillStyle = "#94a3b8";
+          ctx.fillText("No feature importance available", 10, 20);
+          return;
+        }
+        const topRows = rows.slice(0, 10);
+        const maxVal = Math.max(...topRows.map((r) => Math.abs(r.value))) || 1;
+        const barHeight = 22;
+        const padding = 8;
+        ctx.font = "12px Segoe UI";
+        topRows.forEach((row, i) => {
+          const y = padding + i * (barHeight + 6);
+          const barWidth = (Math.abs(row.value) / maxVal) * (importanceChart.width - 180);
+          ctx.fillStyle = "#1f2937";
+          ctx.fillRect(150, y, importanceChart.width - 170, barHeight);
+          ctx.fillStyle = "#22d3ee";
+          ctx.fillRect(150, y, barWidth, barHeight);
+          ctx.fillStyle = "#e5e7eb";
+          ctx.fillText(row.feature, 6, y + 15);
+          ctx.fillStyle = "#94a3b8";
+          ctx.fillText(Math.abs(row.value).toFixed(4), 155 + barWidth, y + 15);
+        });
+      }
+
+      function updateExplainValues() {
+        if (lastQa && Object.keys(lastQa).length) {
+          featureValuesEl.innerHTML = "";
+          Object.keys(lastQa).forEach((key) => {
+            const line = document.createElement("div");
+            line.textContent = `${key}: ${lastQa[key]}`;
+            featureValuesEl.appendChild(line);
+          });
+        } else {
+          featureValuesEl.textContent = "(feature values computed server-side; coming next)";
+        }
+      }
+
+      function handleMessage(msg) {
+        if (msg.server_time_ms != null) {
+          const latencyMs = Date.now() - Number(msg.server_time_ms);
+          if (Number.isFinite(latencyMs)) {
+            latencyEl.textContent = `${Math.max(0, Math.round(latencyMs))}`;
+          } else {
+            latencyEl.textContent = "--";
+          }
+        } else {
+          latencyEl.textContent = "--";
+        }
+
+        if (msg.event === "completed") {
+          appendLog("Completed normally.");
+          setStatus("COMPLETED");
+          disconnectBtn.disabled = true;
+          connectBtn.disabled = false;
+          return;
+        }
+
+        if (msg.event === "connected") {
+          appendLog("Server connected.");
+          setStatus("CONNECTING");
+          return;
+        }
+
+        if (msg.event === "loading") {
+          const stage = msg.stage ? ` (${msg.stage})` : "";
+          appendLog(`Loading${stage}...`);
+          setStatus("LOADING");
+          return;
+        }
+
+        if (msg.event === "streaming_started") {
+          appendLog("Streaming started.");
+          setStatus("STREAMING");
+          return;
+        }
+
+        if (msg.error) {
+          appendLog(`Error: ${msg.error} ${msg.detail || ""}`.trim());
+          setStatus("ERROR");
+          return;
+        }
+
+        const score = Number(msg.score);
+        if (Number.isFinite(score) && currentStatus !== "STREAMING" && currentStatus !== "COMPLETED") {
+          setStatus("STREAMING");
+        }
+        if (!Number.isFinite(score)) {
+          return;
+        }
+
+        const nowMs = Date.now();
+        const strideSec = Number(document.getElementById("stride").value) || 1;
+        const speed = Number(document.getElementById("speed").value) || 0;
+        const expectedIntervalMs = speed > 0 ? (strideSec / speed) * 1000 : strideSec * 1000;
+        if (lastMessageTime != null) {
+          const actualInterval = nowMs - lastMessageTime;
+          const jitter = Math.abs(actualInterval - expectedIntervalMs);
+          jitterEl.textContent = `Update jitter: ${Math.round(jitter)} ms`;
+        } else {
+          jitterEl.textContent = "Update jitter: --";
+        }
+        lastMessageTime = nowMs;
+
+        if (msg.qa) {
+          lastQa = msg.qa;
+          updateExplainValues();
+        }
+
+        scoreLine.textContent = `Score: ${score.toFixed(3)} | State: ${msg.state} | Action: ${msg.action}`;
+        whyLine.textContent = `Why: score=${score.toFixed(3)} -> state=${msg.state} -> action=${msg.action}`;
+        pupilQuality.textContent = msg.qa && msg.qa.pupil_valid_frac != null ? Number(msg.qa.pupil_valid_frac).toFixed(2) : "--";
+        nSamples.textContent = msg.qa && msg.qa.n_samples_window != null ? msg.qa.n_samples_window : "--";
+
+        updateViewport(msg.state, msg.action);
+        updateActionPanel(msg.action);
+
+        scoreHistory.push(score);
+        if (scoreHistory.length > 200) scoreHistory.shift();
+        drawSparkline();
+
+        if (msg.action !== lastAction) {
+          actionPanel.classList.remove("animate");
+          void actionPanel.offsetWidth;
+          actionPanel.classList.add("animate");
+          const t = msg.window_end_sec != null ? msg.window_end_sec.toFixed(1) : "?";
+          eventTimeline.textContent = `[t=${t}] ${msg.state} -> ${msg.action} score=${score.toFixed(2)}`;
+          lastAction = msg.action;
+        }
+
+        appendLog(`[t=${msg.window_end_sec.toFixed(1)}] ${msg.state} ${msg.action} score=${score.toFixed(3)}`);
       }
 
       function buildWsUrl() {
@@ -105,9 +1041,7 @@
           window_len_sec: windowLen || "10",
           stride_sec: stride || "1",
         });
-        if (maxSteps) {
-          params.set("max_steps", maxSteps);
-        }
+        if (maxSteps) params.set("max_steps", maxSteps);
 
         const proto = (location.protocol === "https:") ? "wss" : "ws";
         const base = `${proto}://${location.host}`;
@@ -115,51 +1049,71 @@
       }
 
       function connect() {
-        const wsUrl = buildWsUrl();
-        wsUrlEl.textContent = wsUrl;
-        appendLog(`Connecting to ${wsUrl}`);
+        if (sourceSelect.value === "synthetic") {
+          startSynthetic();
+          return;
+        }
 
+        const wsUrl = sourceSelect.value === "remote"
+          ? document.getElementById("remoteUrl").value.trim()
+          : buildWsUrl();
+
+        wsUrlEl.textContent = wsUrl || "--";
+        if (!wsUrl) {
+          appendLog("Missing WebSocket URL.");
+          return;
+        }
+
+        setStatus("CONNECTING");
         ws = new WebSocket(wsUrl);
+        if (connectTimer) clearTimeout(connectTimer);
+        connectTimer = setTimeout(() => {
+          if (ws && ws.readyState !== WebSocket.OPEN) {
+            appendLog("Connect timed out.");
+            setStatus("TIMEOUT");
+            ws.close();
+          }
+        }, 5000);
 
         ws.onopen = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
           appendLog("Connected.");
+          setStatus("CONNECTING");
           connectBtn.disabled = true;
           disconnectBtn.disabled = false;
+          pauseBtn.disabled = false;
         };
 
         ws.onerror = () => {
           appendLog("WebSocket error (see console)");
+          setStatus("ERROR");
         };
 
         ws.onmessage = (event) => {
+          if (paused) return;
           const msg = JSON.parse(event.data);
-          if (msg.event === "completed") {
-            appendLog("Completed normally.");
-            disconnectBtn.disabled = true;
-            connectBtn.disabled = false;
-            return;
-          }
-          if (msg.error) {
-            appendLog(`Error: ${msg.error} ${msg.detail || ""}`.trim());
-            return;
-          }
-          const score = Number(msg.score).toFixed(3);
-          statusEl.textContent = `Score: ${score} | State: ${msg.state} | Action: ${msg.action}`;
-          if (msg.action_changed) {
-            actionChangedEl.textContent = "Action changed!";
-            setTimeout(() => { actionChangedEl.textContent = ""; }, 1000);
-          }
-          appendLog(`[${Number(msg.window_end_sec).toFixed(1)}] ${msg.state} ${msg.action} score=${score}`);
+          handleMessage(msg);
         };
 
         ws.onclose = (event) => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
           if (event.code === 1000) {
             appendLog("Closed normally (code=1000).");
+            setStatus("COMPLETED");
           } else {
             appendLog(`Closed code=${event.code} reason=${event.reason || ""}`.trim());
+            setStatus("DISCONNECTED");
           }
           connectBtn.disabled = false;
           disconnectBtn.disabled = true;
+          pauseBtn.disabled = true;
+          resumeBtn.disabled = true;
         };
       }
 
@@ -168,10 +1122,164 @@
           ws.close();
           ws = null;
         }
+        if (connectTimer) {
+          clearTimeout(connectTimer);
+          connectTimer = null;
+        }
+        stopSynthetic();
+        setStatus("DISCONNECTED");
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        pauseBtn.disabled = true;
+        resumeBtn.disabled = true;
       }
+
+      function pause() {
+        paused = true;
+        setStatus("PAUSED");
+        pauseBtn.disabled = true;
+        resumeBtn.disabled = false;
+      }
+
+      function resume() {
+        paused = false;
+        setStatus("STREAMING");
+        pauseBtn.disabled = false;
+        resumeBtn.disabled = true;
+      }
+
+      function clearLog() {
+        logEl.innerHTML = "";
+        eventTimeline.textContent = "--";
+        scoreHistory = [];
+        drawSparkline();
+      }
+
+      function startSynthetic() {
+        stopSynthetic();
+        setStatus("STREAMING");
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        pauseBtn.disabled = false;
+        const interval = Number(document.getElementById("syntheticInterval").value) || 250;
+        let t = 0;
+        syntheticTimer = setInterval(() => {
+          if (paused) return;
+          const score = 0.5 + 0.4 * Math.sin(t / 10) + (Math.random() - 0.5) * 0.05;
+          const msg = {
+            score: Math.max(0, Math.min(1, score)),
+            state: score > 0.7 ? "HIGH" : score < 0.4 ? "LOW" : "MEDIUM",
+            action: score > 0.7 ? "SLOW_ANIMATIONS" : score < 0.4 ? "NO_CHANGE" : "REDUCE_CLUTTER",
+            action_changed: false,
+            window_end_sec: t / 2,
+            qa: { pupil_valid_frac: 0.9, n_samples_window: 120 },
+          };
+          handleMessage(msg);
+          t += 1;
+        }, interval);
+      }
+
+      function stopSynthetic() {
+        if (syntheticTimer) {
+          clearInterval(syntheticTimer);
+          syntheticTimer = null;
+        }
+      }
+
+      function setupTabs() {
+        const buttons = document.querySelectorAll(".tab-btn");
+        buttons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            buttons.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            const tab = btn.getAttribute("data-tab");
+            document.querySelectorAll(".tab-content").forEach((content) => {
+              content.classList.toggle("active", content.id === `tab-${tab}`);
+            });
+          });
+        });
+      }
+
+      async function loadSummary() {
+        try {
+          const resp = await fetch("/api/summary");
+          if (!resp.ok) throw new Error("summary fetch failed");
+          const data = await resp.json();
+          const modelName = data.model_name || "unknown";
+          const featureSet = data.feature_set || "unknown";
+          const metrics = data.metrics || "see report";
+          modelSummary.textContent = `Model: ${modelName} | Feature set: ${featureSet} | Metrics: ${JSON.stringify(metrics)}`;
+          if (data.confusion_matrix_png) {
+            const img = document.createElement("img");
+            img.src = "/api/artifact/confusion_matrix.png";
+            img.alt = "Confusion matrix";
+            img.className = "artifact-img";
+            confusionWrapper.innerHTML = "";
+            confusionWrapper.appendChild(img);
+          } else {
+            confusionWrapper.textContent = "Confusion matrix not available.";
+          }
+
+          if (Array.isArray(data.feature_columns)) {
+            const pupilOnly = data.feature_columns.filter((f) => String(f).includes("pupil")).slice(0, 8);
+            if (pupilOnly.length) {
+              featureListEl.innerHTML = "";
+              pupilOnly.forEach((feat) => {
+                const line = document.createElement("div");
+                line.textContent = feat;
+                featureListEl.appendChild(line);
+              });
+            } else {
+              featureListEl.textContent = "No pupil-only features found.";
+            }
+          }
+        } catch (err) {
+          modelSummary.textContent = "Model summary unavailable.";
+        }
+      }
+
+      async function loadFeatureImportance() {
+        try {
+          const resp = await fetch("/api/feature-importance");
+          if (!resp.ok) throw new Error("feature importance fetch failed");
+          const rows = await resp.json();
+          drawFeatureImportance(rows);
+        } catch (err) {
+          drawFeatureImportance([]);
+        }
+      }
+
+      sourceSelect.addEventListener("change", () => {
+        replayInputs.style.display = sourceSelect.value === "replay" ? "block" : "none";
+        remoteInputs.style.display = sourceSelect.value === "remote" ? "block" : "none";
+        syntheticInputs.style.display = sourceSelect.value === "synthetic" ? "block" : "none";
+        wsUrlEl.textContent = sourceSelect.value === "remote" ? "(remote)" : buildWsUrl();
+      });
+
+      speedSlider.addEventListener("input", () => {
+        document.getElementById("speed").value = speedSlider.value;
+        if (sourceSelect.value === "replay") {
+          wsUrlEl.textContent = buildWsUrl();
+        }
+      });
+
+      dismissBreakBtn.addEventListener("click", () => {
+        breakOverlay.classList.remove("active");
+      });
 
       connectBtn.addEventListener("click", connect);
       disconnectBtn.addEventListener("click", disconnect);
+      pauseBtn.addEventListener("click", pause);
+      resumeBtn.addEventListener("click", resume);
+      clearLogBtn.addEventListener("click", clearLog);
+
+      wsUrlEl.textContent = buildWsUrl();
+      drawSparkline();
+      updateExplainValues();
+      setStatus("DISCONNECTED");
+      setupTabs();
+      loadSummary();
+      loadFeatureImportance();
     </script>
   </body>
 </html>
